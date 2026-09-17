@@ -1,18 +1,54 @@
-import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl, Modal } from "obsidian";
 
 const VIEW_TYPE_HERMES_FRAME = "hermes-frame-view";
 
-// Electron safeStorage for OS keychain encryption
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const electron = (window as any).require?.("electron");
-const safeStorage = electron?.safeStorage;
+// --- Cross-platform crypto via Web Crypto API ---
+
+async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+	const enc = new TextEncoder();
+	const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+	return crypto.subtle.deriveKey(
+		{ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
+		keyMaterial,
+		{ name: "AES-GCM", length: 256 },
+		false,
+		["encrypt", "decrypt"]
+	);
+}
+
+async function encryptPayload(plain: string, password: string): Promise<string> {
+	if (!plain) return "";
+	const enc = new TextEncoder();
+	const salt = crypto.getRandomValues(new Uint8Array(16));
+	const iv = crypto.getRandomValues(new Uint8Array(12));
+	const key = await deriveKey(password, salt);
+	const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plain));
+	// Pack salt + iv + ciphertext into one base64 string
+	const buf = new Uint8Array(salt.length + iv.length + new Uint8Array(encrypted).length);
+	buf.set(salt, 0);
+	buf.set(iv, salt.length);
+	buf.set(new Uint8Array(encrypted), salt.length + iv.length);
+	return btoa(String.fromCharCode(...buf));
+}
+
+async function decryptPayload(encoded: string, password: string): Promise<string> {
+	if (!encoded) return "";
+	const raw = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+	const salt = raw.slice(0, 16);
+	const iv = raw.slice(16, 28);
+	const ciphertext = raw.slice(28);
+	const key = await deriveKey(password, salt);
+	const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+	return new TextDecoder().decode(decrypted);
+}
+
+// --- Settings ---
 
 interface HermesFrameSettings {
 	statusUrl: string;
 	fallbackUrl: string;
 	hermesUrl: string;
 	pollIntervalSeconds: number;
-	// Encrypted credentials (safeStorage encrypted buffers, stored as base64)
 	hermesUsernameEnc: string;
 	hermesPasswordEnc: string;
 }
@@ -26,19 +62,52 @@ const DEFAULT_SETTINGS: HermesFrameSettings = {
 	hermesPasswordEnc: "",
 };
 
-// Helper: encrypt string → base64
-function encryptString(plain: string): string {
-	if (!safeStorage || !plain) return "";
-	const buf = safeStorage.encryptString(plain);
-	return Buffer.from(buf).toString("base64");
+// --- Unlock Modal ---
+
+class UnlockModal extends Modal {
+	private password = "";
+	private resolve: (pw: string) => void;
+
+	constructor(app: App, resolve: (pw: string) => void) {
+		super(app);
+		this.resolve = resolve;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.createEl("h2", { text: "Unlock Hermes Frame" });
+		contentEl.createEl("p", { text: "Enter your vault password to decrypt credentials." });
+
+		const input = contentEl.createEl("input", {
+			type: "password",
+			attr: { placeholder: "Vault password" },
+		});
+		input.style.width = "100%";
+		input.style.marginTop = "8px";
+
+		const btn = contentEl.createEl("button", { text: "Unlock" });
+		btn.style.marginTop = "12px";
+		btn.onclick = () => {
+			this.password = input.value;
+			this.close();
+			this.resolve(this.password);
+		};
+
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				this.password = input.value;
+				this.close();
+				this.resolve(this.password);
+			}
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
 }
 
-// Helper: base64 → decrypted string
-function decryptString(encoded: string): string {
-	if (!safeStorage || !encoded) return "";
-	const buf = Buffer.from(encoded, "base64");
-	return safeStorage.decryptString(buf);
-}
+// --- View ---
 
 class HermesFrameView extends ItemView {
 	private iframe: HTMLIFrameElement | null = null;
@@ -46,10 +115,12 @@ class HermesFrameView extends ItemView {
 	private pollInterval: number | null = null;
 	private pcOnline = false;
 	private settings: HermesFrameSettings;
+	private plugin: HermesFramePlugin;
 
-	constructor(leaf: WorkspaceLeaf, settings: HermesFrameSettings) {
+	constructor(leaf: WorkspaceLeaf, settings: HermesFrameSettings, plugin: HermesFramePlugin) {
 		super(leaf);
 		this.settings = settings;
+		this.plugin = plugin;
 		this.navigation = false;
 	}
 
@@ -149,40 +220,40 @@ class HermesFrameView extends ItemView {
 		}
 	}
 
-	private buildAuthUrl(baseUrl: string): string {
-		const username = decryptString(this.settings.hermesUsernameEnc);
-		const password = decryptString(this.settings.hermesPasswordEnc);
-
-		if (!username) return baseUrl;
-
-		// Basic Auth via URL: http://user:pass@host:port/
-		const url = new URL(baseUrl);
-		url.username = username;
-		url.password = password;
-		return url.toString();
-	}
-
 	private updateIframe(): void {
 		if (!this.iframe) return;
 
 		const rawUrl = this.pcOnline ? this.settings.hermesUrl : this.settings.fallbackUrl;
-		const url = this.buildAuthUrl(rawUrl);
 
-		if (this.iframe.src !== url) {
-			this.iframe.src = url;
+		// If no credentials set, use raw URL
+		if (!this.settings.hermesUsernameEnc) {
+			if (this.iframe.src !== rawUrl) {
+				this.iframe.src = rawUrl;
+			}
+			return;
 		}
+
+		// Decrypt and build auth URL — uses cached password from plugin
+		this.plugin.getDecryptedUrl(rawUrl).then((url) => {
+			if (this.iframe && this.iframe.src !== url) {
+				this.iframe.src = url;
+			}
+		});
 	}
 }
 
+// --- Plugin ---
+
 export default class HermesFramePlugin extends Plugin {
 	settings: HermesFrameSettings = DEFAULT_SETTINGS;
+	private vaultPassword: string | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
 		this.registerView(
 			VIEW_TYPE_HERMES_FRAME,
-			(leaf) => new HermesFrameView(leaf, this.settings)
+			(leaf) => new HermesFrameView(leaf, this.settings, this)
 		);
 
 		this.addRibbonIcon("sidebox", "Toggle Hermes Frame", () => {
@@ -229,15 +300,58 @@ export default class HermesFramePlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	// Public API for settings tab
-	encryptAndStore(field: "hermesUsernameEnc" | "hermesPasswordEnc", plain: string): void {
-		this.settings[field] = encryptString(plain);
+	// Prompt for vault password (once per session)
+	private async ensurePassword(): Promise<string | null> {
+		if (this.vaultPassword) return this.vaultPassword;
+
+		return new Promise<string | null>((resolve) => {
+			new UnlockModal(this.app, (pw) => {
+				this.vaultPassword = pw;
+				resolve(pw);
+			}).open();
+		});
 	}
 
-	decryptField(field: "hermesUsernameEnc" | "hermesPasswordEnc"): string {
-		return decryptString(this.settings[field]);
+	// Encrypt and store credential
+	async encryptCredential(field: "hermesUsernameEnc" | "hermesPasswordEnc", plain: string): Promise<void> {
+		if (!plain) {
+			this.settings[field] = "";
+			return;
+		}
+		const pw = await this.ensurePassword();
+		if (!pw) return;
+		this.settings[field] = await encryptPayload(plain, pw);
+	}
+
+	// Decrypt credential
+	async decryptCredential(field: "hermesUsernameEnc" | "hermesPasswordEnc"): Promise<string> {
+		const encoded = this.settings[field];
+		if (!encoded) return "";
+		const pw = await this.ensurePassword();
+		if (!pw) return "";
+		try {
+			return await decryptPayload(encoded, pw);
+		} catch {
+			// Wrong password or corrupted data
+			return "";
+		}
+	}
+
+	// Build auth URL for iframe
+	async getDecryptedUrl(baseUrl: string): Promise<string> {
+		const username = await this.decryptCredential("hermesUsernameEnc");
+		const password = await this.decryptCredential("hermesPasswordEnc");
+
+		if (!username) return baseUrl;
+
+		const url = new URL(baseUrl);
+		url.username = username;
+		url.password = password;
+		return url.toString();
 	}
 }
+
+// --- Settings Tab ---
 
 class HermesFrameSettingTab extends PluginSettingTab {
 	plugin: HermesFramePlugin;
@@ -306,47 +420,44 @@ class HermesFrameSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// --- Credentials (encrypted via OS keychain) ---
+		// --- Credentials ---
 
 		containerEl.createEl("h3", { text: "Hermes Login" });
+		containerEl.createEl("p", {
+			text: "Credentials are encrypted with a vault password using AES-256-GCM (Web Crypto API). Works on all platforms.",
+			cls: "setting-item-description",
+		});
 
-		if (!safeStorage) {
-			containerEl.createEl("p", {
-				text: "⚠️ safeStorage not available — credentials cannot be encrypted on this platform.",
-				cls: "setting-item-description",
-			});
-		}
+		// Show current username (decrypted) if available
+		this.plugin.decryptCredential("hermesUsernameEnc").then((currentUsername) => {
+			new Setting(containerEl)
+				.setName("Username")
+				.setDesc("Hermes dashboard username")
+				.addText((text) =>
+					text
+						.setPlaceholder("username")
+						.setValue(currentUsername)
+						.onChange(async (value) => {
+							await this.plugin.encryptCredential("hermesUsernameEnc", value);
+							await this.plugin.saveSettings();
+						})
+				);
+		});
 
-		const currentUsername = this.plugin.decryptField("hermesUsernameEnc");
-
-		new Setting(containerEl)
-			.setName("Username")
-			.setDesc("Hermes dashboard username (encrypted via OS keychain)")
-			.addText((text) =>
-				text
-					.setPlaceholder("username")
-					.setValue(currentUsername)
-					.onChange(async (value) => {
-						this.plugin.encryptAndStore("hermesUsernameEnc", value);
-						await this.plugin.saveSettings();
-					})
-			);
-
-		const currentPassword = this.plugin.decryptField("hermesPasswordEnc");
-
-		new Setting(containerEl)
-			.setName("Password")
-			.setDesc("Hermes dashboard password (encrypted via OS keychain)")
-			.addText((text) => {
-				text
-					.setPlaceholder("password")
-					.setValue(currentPassword)
-					.onChange(async (value) => {
-						this.plugin.encryptAndStore("hermesPasswordEnc", value);
-						await this.plugin.saveSettings();
-					});
-				// Mask the input field
-				text.inputEl.type = "password";
-			});
+		this.plugin.decryptCredential("hermesPasswordEnc").then((currentPassword) => {
+			new Setting(containerEl)
+				.setName("Password")
+				.setDesc("Hermes dashboard password")
+				.addText((text) => {
+					text
+						.setPlaceholder("password")
+						.setValue(currentPassword)
+						.onChange(async (value) => {
+							await this.plugin.encryptCredential("hermesPasswordEnc", value);
+							await this.plugin.saveSettings();
+						});
+					text.inputEl.type = "password";
+				});
+		});
 	}
 }
