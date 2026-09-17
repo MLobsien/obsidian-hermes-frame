@@ -1,4 +1,4 @@
-import { ItemView, Plugin, WorkspaceLeaf, Notice, Setting, PluginSettingTab, App } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App } from "obsidian";
 
 const VIEW_TYPE_HERMES_FRAME = "hermes-frame-view";
 
@@ -19,13 +19,14 @@ const DEFAULT_SETTINGS: HermesFrameSettings = {
 class HermesFrameView extends ItemView {
 	private iframe: HTMLIFrameElement | null = null;
 	private statusIndicator: HTMLElement | null = null;
-	private pollInterval: ReturnType<typeof setInterval> | null = null;
-	private pcOnline: boolean = false;
+	private pollInterval: number | null = null;
+	private pcOnline = false;
 	private settings: HermesFrameSettings;
 
 	constructor(leaf: WorkspaceLeaf, settings: HermesFrameSettings) {
 		super(leaf);
 		this.settings = settings;
+		this.navigation = false;
 	}
 
 	getViewType(): string {
@@ -37,21 +38,19 @@ class HermesFrameView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "monitor";
+		return "sidebox";
 	}
 
 	async onOpen(): Promise<void> {
-		const container = this.containerEl.children[1];
+		const container = this.contentEl;
 		container.empty();
 		container.addClass("hermes-frame-container");
 
-		// Status bar
 		const statusBar = container.createDiv({ cls: "hermes-frame-status" });
 		this.statusIndicator = statusBar.createDiv({ cls: "hermes-frame-indicator" });
 		const statusText = statusBar.createSpan({ cls: "hermes-frame-status-text" });
 		statusText.setText("Checking PC status…");
 
-		// Iframe
 		this.iframe = container.createEl("iframe", {
 			cls: "hermes-frame-iframe",
 			attr: {
@@ -59,26 +58,27 @@ class HermesFrameView extends ItemView {
 			},
 		});
 
-		// Start polling
 		await this.checkStatus();
 		this.startPolling();
 	}
 
 	async onClose(): Promise<void> {
 		this.stopPolling();
+		this.contentEl.empty();
 	}
 
 	private startPolling(): void {
 		this.stopPolling();
-		this.pollInterval = setInterval(
+		this.pollInterval = window.setInterval(
 			() => this.checkStatus(),
 			this.settings.pollIntervalSeconds * 1000
 		);
+		this.registerInterval(this.pollInterval);
 	}
 
 	private stopPolling(): void {
 		if (this.pollInterval !== null) {
-			clearInterval(this.pollInterval);
+			window.clearInterval(this.pollInterval);
 			this.pollInterval = null;
 		}
 	}
@@ -86,25 +86,23 @@ class HermesFrameView extends ItemView {
 	private async checkStatus(): Promise<void> {
 		try {
 			const controller = new AbortController();
-			const timeoutId = setTimeout(() => controller.abort(), 3000);
+			const timeoutId = window.setTimeout(() => controller.abort(), 3000);
 
 			const response = await fetch(this.settings.statusUrl, {
 				method: "GET",
 				signal: controller.signal,
 			});
-			clearTimeout(timeoutId);
+			window.clearTimeout(timeoutId);
 
 			const wasOnline = this.pcOnline;
 			this.pcOnline = response.ok;
 
 			this.updateStatusIndicator();
 
-			// Only reload iframe if state changed
 			if (wasOnline !== this.pcOnline) {
 				this.updateIframe();
 			}
 		} catch {
-			// Network error = PC is off or unreachable
 			const wasOnline = this.pcOnline;
 			this.pcOnline = false;
 
@@ -119,7 +117,7 @@ class HermesFrameView extends ItemView {
 	private updateStatusIndicator(): void {
 		if (!this.statusIndicator) return;
 
-		const statusText = this.containerEl.querySelector(
+		const statusText = this.contentEl.querySelector(
 			".hermes-frame-status-text"
 		) as HTMLSpanElement | null;
 
@@ -139,20 +137,9 @@ class HermesFrameView extends ItemView {
 
 		const url = this.pcOnline ? this.settings.hermesUrl : this.settings.fallbackUrl;
 
-		// Only reload if URL actually changed
 		if (this.iframe.src !== url) {
 			this.iframe.src = url;
 		}
-	}
-
-	getState(): Record<string, unknown> {
-		return {
-			pcOnline: this.pcOnline,
-		};
-	}
-
-	async onResize(): Promise<void> {
-		// iframe auto-resizes via CSS
 	}
 }
 
@@ -167,7 +154,7 @@ export default class HermesFramePlugin extends Plugin {
 			(leaf) => new HermesFrameView(leaf, this.settings)
 		);
 
-		this.addRibbonIcon("monitor", "Toggle Hermes Frame", () => {
+		this.addRibbonIcon("sidebox", "Toggle Hermes Frame", () => {
 			this.activateView();
 		});
 
@@ -189,7 +176,6 @@ export default class HermesFramePlugin extends Plugin {
 	async activateView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_HERMES_FRAME);
 		if (existing.length > 0) {
-			// Toggle off if already open
 			existing[0].detach();
 			return;
 		}
