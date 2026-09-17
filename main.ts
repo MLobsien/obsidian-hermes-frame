@@ -2,11 +2,19 @@ import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, reques
 
 const VIEW_TYPE_HERMES_FRAME = "hermes-frame-view";
 
+// Electron safeStorage for OS keychain encryption
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const electron = (window as any).require?.("electron");
+const safeStorage = electron?.safeStorage;
+
 interface HermesFrameSettings {
 	statusUrl: string;
 	fallbackUrl: string;
 	hermesUrl: string;
 	pollIntervalSeconds: number;
+	// Encrypted credentials (safeStorage encrypted buffers, stored as base64)
+	hermesUsernameEnc: string;
+	hermesPasswordEnc: string;
 }
 
 const DEFAULT_SETTINGS: HermesFrameSettings = {
@@ -14,7 +22,23 @@ const DEFAULT_SETTINGS: HermesFrameSettings = {
 	fallbackUrl: "http://server-von-mads:8080",
 	hermesUrl: "http://Desktop-von-Mads:9119",
 	pollIntervalSeconds: 5,
+	hermesUsernameEnc: "",
+	hermesPasswordEnc: "",
 };
+
+// Helper: encrypt string → base64
+function encryptString(plain: string): string {
+	if (!safeStorage || !plain) return "";
+	const buf = safeStorage.encryptString(plain);
+	return Buffer.from(buf).toString("base64");
+}
+
+// Helper: base64 → decrypted string
+function decryptString(encoded: string): string {
+	if (!safeStorage || !encoded) return "";
+	const buf = Buffer.from(encoded, "base64");
+	return safeStorage.decryptString(buf);
+}
 
 class HermesFrameView extends ItemView {
 	private iframe: HTMLIFrameElement | null = null;
@@ -125,10 +149,24 @@ class HermesFrameView extends ItemView {
 		}
 	}
 
+	private buildAuthUrl(baseUrl: string): string {
+		const username = decryptString(this.settings.hermesUsernameEnc);
+		const password = decryptString(this.settings.hermesPasswordEnc);
+
+		if (!username) return baseUrl;
+
+		// Basic Auth via URL: http://user:pass@host:port/
+		const url = new URL(baseUrl);
+		url.username = username;
+		url.password = password;
+		return url.toString();
+	}
+
 	private updateIframe(): void {
 		if (!this.iframe) return;
 
-		const url = this.pcOnline ? this.settings.hermesUrl : this.settings.fallbackUrl;
+		const rawUrl = this.pcOnline ? this.settings.hermesUrl : this.settings.fallbackUrl;
+		const url = this.buildAuthUrl(rawUrl);
 
 		if (this.iframe.src !== url) {
 			this.iframe.src = url;
@@ -189,6 +227,15 @@ export default class HermesFramePlugin extends Plugin {
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	// Public API for settings tab
+	encryptAndStore(field: "hermesUsernameEnc" | "hermesPasswordEnc", plain: string): void {
+		this.settings[field] = encryptString(plain);
+	}
+
+	decryptField(field: "hermesUsernameEnc" | "hermesPasswordEnc"): string {
+		return decryptString(this.settings[field]);
 	}
 }
 
@@ -258,5 +305,48 @@ class HermesFrameSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// --- Credentials (encrypted via OS keychain) ---
+
+		containerEl.createEl("h3", { text: "Hermes Login" });
+
+		if (!safeStorage) {
+			containerEl.createEl("p", {
+				text: "⚠️ safeStorage not available — credentials cannot be encrypted on this platform.",
+				cls: "setting-item-description",
+			});
+		}
+
+		const currentUsername = this.plugin.decryptField("hermesUsernameEnc");
+
+		new Setting(containerEl)
+			.setName("Username")
+			.setDesc("Hermes dashboard username (encrypted via OS keychain)")
+			.addText((text) =>
+				text
+					.setPlaceholder("username")
+					.setValue(currentUsername)
+					.onChange(async (value) => {
+						this.plugin.encryptAndStore("hermesUsernameEnc", value);
+						await this.plugin.saveSettings();
+					})
+			);
+
+		const currentPassword = this.plugin.decryptField("hermesPasswordEnc");
+
+		new Setting(containerEl)
+			.setName("Password")
+			.setDesc("Hermes dashboard password (encrypted via OS keychain)")
+			.addText((text) => {
+				text
+					.setPlaceholder("password")
+					.setValue(currentPassword)
+					.onChange(async (value) => {
+						this.plugin.encryptAndStore("hermesPasswordEnc", value);
+						await this.plugin.saveSettings();
+					});
+				// Mask the input field
+				text.inputEl.type = "password";
+			});
 	}
 }
