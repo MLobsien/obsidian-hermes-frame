@@ -1,4 +1,4 @@
-import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl, SecretComponent, addIcon } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl, addIcon } from "obsidian";
 
 const VIEW_TYPE_HERMES_FRAME = "hermes-frame-view";
 
@@ -9,8 +9,6 @@ interface HermesFrameSettings {
 	fallbackUrl: string;
 	hermesUrl: string;
 	pollIntervalSeconds: number;
-	hermesUsernameSecret: string;
-	hermesPasswordSecret: string;
 }
 
 const DEFAULT_SETTINGS: HermesFrameSettings = {
@@ -18,8 +16,6 @@ const DEFAULT_SETTINGS: HermesFrameSettings = {
 	fallbackUrl: "http://server-von-mads:8080",
 	hermesUrl: "http://Desktop-von-Mads:9119",
 	pollIntervalSeconds: 5,
-	hermesUsernameSecret: "",
-	hermesPasswordSecret: "",
 };
 
 // --- View ---
@@ -216,8 +212,8 @@ export default class HermesFramePlugin extends Plugin {
 		const secretStorage = this.getSecretStorage();
 		if (!secretStorage) return baseUrl;
 
-		const username = secretStorage.getSecret(this.settings.hermesUsernameSecret) ?? "";
-		const password = secretStorage.getSecret(this.settings.hermesPasswordSecret) ?? "";
+		const username = secretStorage.getSecret("hermes-frame-username") ?? "";
+		const password = secretStorage.getSecret("hermes-frame-password") ?? "";
 
 		if (!username) return baseUrl;
 
@@ -297,42 +293,32 @@ class HermesFrameSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// --- Credentials (OS Keychain via SecretStorage) ---
-
-		containerEl.createEl("h3", { text: "Hermes Login" });
-
-		const hasSecretStorage = !!(this.app as any).secretStorage;
-
-		if (!hasSecretStorage) {
-			containerEl.createEl("p", {
-				text: "SecretStorage API not available. Update Obsidian to 1.11.4+ for OS keychain support.",
-			});
-		}
 
 		new Setting(containerEl)
 			.setName("Username")
-			.setDesc("Hermes dashboard username (stored in OS keychain)")
-			.addComponent((el) => {
-				const comp = new SecretComponent(this.app, el);
-				comp.setValue(this.plugin.settings.hermesUsernameSecret);
-				comp.onChange(async (value) => {
-					this.plugin.settings.hermesUsernameSecret = value;
-					await this.plugin.saveSettings();
-				});
-				return comp;
-			});
+			.setDesc("Hermes dashboard username")
+			.addText((text) =>
+				text
+					.setPlaceholder("username")
+					.setValue("")
+					.onChange(async (value) => {
+						const ss = (this.app as any).secretStorage;
+						if (ss) ss.setSecret("hermes-frame-username", value);
+					})
+			);
 
 		new Setting(containerEl)
 			.setName("Password")
-			.setDesc("Hermes dashboard password (stored in OS keychain)")
-			.addComponent((el) => {
-				const comp = new SecretComponent(this.app, el);
-				comp.setValue(this.plugin.settings.hermesPasswordSecret);
-				comp.onChange(async (value) => {
-					this.plugin.settings.hermesPasswordSecret = value;
-					await this.plugin.saveSettings();
-				});
-				return comp;
+			.setDesc("Hermes dashboard password")
+			.addText((text) => {
+				text
+					.setPlaceholder("password")
+					.setValue("")
+					.onChange(async (value) => {
+						const ss = (this.app as any).secretStorage;
+						if (ss) ss.setSecret("hermes-frame-password", value);
+					});
+				text.inputEl.type = "password";
 			});
 	}
 }
