@@ -53,9 +53,6 @@ class HermesFrameView extends ItemView {
 
 		this.iframe = container.createEl("iframe", {
 			cls: "hermes-frame-iframe",
-			attr: {
-				sandbox: "allow-scripts allow-same-origin allow-forms allow-popups",
-			},
 		});
 
 		await this.checkStatus();
