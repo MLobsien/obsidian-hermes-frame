@@ -1,4 +1,4 @@
-import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl } from "obsidian";
 
 const VIEW_TYPE_HERMES_FRAME = "hermes-frame-view";
 
@@ -85,17 +85,13 @@ class HermesFrameView extends ItemView {
 
 	private async checkStatus(): Promise<void> {
 		try {
-			const controller = new AbortController();
-			const timeoutId = window.setTimeout(() => controller.abort(), 3000);
-
-			const response = await fetch(this.settings.statusUrl, {
+			const response = await requestUrl({
+				url: this.settings.statusUrl,
 				method: "GET",
-				signal: controller.signal,
 			});
-			window.clearTimeout(timeoutId);
 
 			const wasOnline = this.pcOnline;
-			this.pcOnline = response.ok;
+			this.pcOnline = response.status >= 200 && response.status < 300;
 
 			this.updateStatusIndicator();
 
