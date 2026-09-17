@@ -1,4 +1,4 @@
-import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl, SecretComponent } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, Setting, PluginSettingTab, App, requestUrl, SecretComponent, addIcon } from "obsidian";
 
 const VIEW_TYPE_HERMES_FRAME = "hermes-frame-view";
 
@@ -48,7 +48,7 @@ class HermesFrameView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "monitor";
+		return "hermes-frame";
 	}
 
 	async onOpen(): Promise<void> {
@@ -155,12 +155,15 @@ export default class HermesFramePlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
+		// Register custom Hermes icon (winged helmet)
+		addIcon("hermes-frame", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M50 10 L35 30 H20 L28 45 L20 60 H35 L50 80 L65 60 H80 L72 45 L80 30 H65 Z"/><path d="M50 10 V25"/><path d="M35 30 L25 40"/><path d="M65 30 L75 40"/></svg>`);
+
 		this.registerView(
 			VIEW_TYPE_HERMES_FRAME,
 			(leaf) => new HermesFrameView(leaf, this.settings, this)
 		);
 
-		this.addRibbonIcon("sidebox", "Toggle Hermes Frame", () => {
+		this.addRibbonIcon("hermes-frame", "Toggle Hermes Frame", () => {
 			this.activateView();
 		});
 
@@ -214,8 +217,8 @@ export default class HermesFramePlugin extends Plugin {
 		const secretStorage = this.getSecretStorage();
 		if (!secretStorage) return baseUrl;
 
-		const username = secretStorage.get(this.settings.hermesUsernameSecret) ?? "";
-		const password = secretStorage.get(this.settings.hermesPasswordSecret) ?? "";
+		const username = secretStorage.getSecret(this.settings.hermesUsernameSecret) ?? "";
+		const password = secretStorage.getSecret(this.settings.hermesPasswordSecret) ?? "";
 
 		if (!username) return baseUrl;
 
