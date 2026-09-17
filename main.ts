@@ -48,7 +48,7 @@ class HermesFrameView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "sidebox";
+		return "monitor";
 	}
 
 	async onOpen(): Promise<void> {
