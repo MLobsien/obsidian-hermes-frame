@@ -307,18 +307,47 @@ class HermesFrameSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(containerEl)
-			.setName("Password")
-			.setDesc("Hermes dashboard password")
-			.addText((text) => {
-				text
-					.setPlaceholder("password")
-					.setValue("")
-					.onChange(async (value) => {
-						const ss = (this.app as any).secretStorage;
-						if (ss) ss.setSecret("hermes-frame-password", value);
-					});
-				text.inputEl.type = "password";
+		// Password: write-once, then only overwrite
+		const ss = (this.app as any).secretStorage;
+		const hasPassword = ss?.getSecret("hermes-frame-password");
+
+		if (hasPassword) {
+			new Setting(containerEl)
+				.setName("Password")
+				.setDesc("Password is set.")
+				.addButton((btn) =>
+					btn
+						.setButtonText("Overwrite")
+						.setWarning()
+						.onClick(() => {
+							const el = btn.buttonEl.closest(".setting-item");
+							if (el) el.remove();
+							new Setting(containerEl)
+								.setName("Password")
+								.setDesc("Enter new password")
+								.addText((text) => {
+									text
+										.setPlaceholder("new password")
+										.setValue("")
+										.onChange(async (value) => {
+											if (ss) ss.setSecret("hermes-frame-password", value);
+										});
+									text.inputEl.type = "password";
+								});
+						})
+			);
+		} else {
+			new Setting(containerEl)
+				.setName("Password")
+				.setDesc("Hermes dashboard password")
+				.addText((text) => {
+					text
+						.setPlaceholder("password")
+						.setValue("")
+						.onChange(async (value) => {
+							if (ss) ss.setSecret("hermes-frame-password", value);
+						});
 			});
+		}
 	}
 }
