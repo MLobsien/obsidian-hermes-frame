@@ -1,0 +1,49 @@
+.hermes-frame-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+}
+
+.hermes-frame-status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	font-size: 12px;
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+.hermes-frame-indicator {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	transition: background-color 0.3s ease;
+}
+
+.hermes-frame-indicator.online {
+	background-color: var(--color-green);
+	box-shadow: 0 0 6px var(--color-green);
+}
+
+.hermes-frame-indicator.offline {
+	background-color: var(--color-red);
+	box-shadow: 0 0 6px var(--color-red);
+}
+
+.hermes-frame-status-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.hermes-frame-iframe {
+	flex: 1;
+	width: 100%;
+	border: none;
+	background: var(--background-primary);
+}

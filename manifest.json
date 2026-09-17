@@ -1,0 +1,11 @@
+{
+	"id": "obsidian-hermes-frame",
+	"name": "Hermes Frame",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Sidebar view that shows Hermes Agent when your PC is on, fallback page when off.",
+	"author": "MLobsien",
+	"authorUrl": "https://github.com/MLobsien",
+	"fundingUrl": "",
+	"isDesktopOnly": true
+}
