@@ -155,8 +155,7 @@ export default class HermesFramePlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		// Register custom Hermes icon (winged helmet)
-		addIcon("hermes-frame", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M50 10 L35 30 H20 L28 45 L20 60 H35 L50 80 L65 60 H80 L72 45 L80 30 H65 Z"/><path d="M50 10 V25"/><path d="M35 30 L25 40"/><path d="M65 30 L75 40"/></svg>`);
+		addIcon("hermes-frame", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M50 55 Q30 45 15 25 Q25 40 35 50 Q25 45 10 30 Q22 48 38 55 L50 55"/><path d="M50 55 Q70 45 85 25 Q75 40 65 50 Q75 45 90 30 Q78 48 62 55 L50 55"/></svg>`);
 
 		this.registerView(
 			VIEW_TYPE_HERMES_FRAME,
