@@ -5,7 +5,7 @@ Obsidian sidebar plugin that shows your PC's Hermes Agent when the PC is online,
 ## How it works
 
 1. Polls `http://server-von-mads:8080/action/status` every 5 seconds (configurable)
-2. **PC online** (HTTP 200): renders Hermes Agent dashboard (`http://Desktop-von-Mads:9119`) in an iframe
+2. **PC online** (HTTP 200): renders Hermes Agent dashboard (`https://desktop-von-mads.taile981e1.ts.net`) in an iframe
 3. **PC offline** (error/timeout): renders fallback page (`http://server-von-mads:8080`) in an iframe
 
 ## Install
@@ -22,7 +22,7 @@ Obsidian sidebar plugin that shows your PC's Hermes Agent when the PC is online,
 |---------|---------|-------------|
 | Status URL | `http://server-von-mads:8080/action/status` | Endpoint polled for PC status (GET, 200 = online) |
 | Fallback URL | `http://server-von-mads:8080` | Shown when PC is offline |
-| Hermes URL | `http://Desktop-von-Mads:9119` | Hermes Agent dashboard (shown when PC is online) |
+| Hermes URL | `https://desktop-von-mads.taile981e1.ts.net` | Hermes Agent dashboard (shown when PC is online) |
 | Poll interval | 5s | How often to check status (2–30 seconds) |
 
 ## Usage
