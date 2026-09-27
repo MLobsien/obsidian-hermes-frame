@@ -61,8 +61,6 @@ class HermesFrameView extends ItemView {
 			cls: "hermes-frame-iframe",
 		});
 
-		await this.plugin.ensureSession();
-		await this.updateIframe();
 		await this.checkStatus();
 		this.startPolling();
 	}
@@ -101,7 +99,6 @@ class HermesFrameView extends ItemView {
 			this.updateStatusIndicator();
 
 			if (wasOnline !== this.pcOnline) {
-				await this.plugin.ensureSession();
 				await this.updateIframe();
 			}
 		} catch {
@@ -204,92 +201,6 @@ export default class HermesFramePlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	// --- SecretStorage (OS Keychain) ---
-
-	private getSecretStorage(): any | null {
-		return (this.app as any).secretStorage ?? null;
-	}
-
-	// --- Auto-Login: pine session cookies into the Electron session so that
-	// SameSite=Lax cookies are sent from the cross-site iframe (app://obsidian.md
-	// -> https://ts.net); with Lax the browser would suppress them and the
-	// dashboard would show its login page forever.
-	private getElectron(): any | null {
-		try {
-			const electron = require("electron");
-			return (electron && electron.remote) || null;
-		} catch {
-			return null;
-		}
-	}
-
-	private scrubCookieValue(raw: string): string {
-		// The server sends quoted cookie values; Electron wants the token bare.
-		let v = raw.trim();
-		if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-		return v;
-	}
-
-	async ensureSession(): Promise<void> {
-		const electron = this.getElectron();
-		if (!electron || !this.settings.hermesUrl) return;
-
-		const ses = electron.session && electron.session.defaultSession;
-		if (!ses) return;
-
-		try {
-			const origin = new URL(this.settings.hermesUrl).origin;
-			const probe = await requestUrl({
-				url: origin + "/api/auth/me",
-				method: "GET",
-				throw: false,
-			});
-			if (probe.status >= 200 && probe.status < 300) return; // already valid
-
-			const ss = this.getSecretStorage();
-			const username = ss ? (ss.getSecret("hermes-frame-username") ?? "") : "";
-			const password = ss ? (ss.getSecret("hermes-frame-password") ?? "") : "";
-			if (!username || !password) return;
-
-			const login = await requestUrl({
-				url: origin + "/auth/password-login",
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ provider: "basic", username, password, next: "/" }),
-				throw: false,
-			});
-			if (login.status !== 200) return;
-
-			const rawHeader = (login.headers as Record<string, unknown>)["set-cookie"];
-			const rawCookies: string[] = Array.isArray(rawHeader)
-				? (rawHeader as string[])
-				: rawHeader
-					? [String(rawHeader)]
-					: [];
-			for (const line of rawCookies) {
-				const pair = line.split(";")[0];
-				const eq = pair.indexOf("=");
-				if (eq < 1) continue;
-				const name = pair.slice(0, eq).trim();
-				const value = this.scrubCookieValue(pair.slice(eq + 1));
-				try {
-					await ses.cookies.remove(origin, name);
-				} catch {}
-				try {
-					await ses.cookies.set({
-						url: origin,
-						name,
-						value,
-						secure: true,
-						path: "/",
-						sameSite: "no_restriction",
-					});
-				} catch {}
-			}
-		} catch {
-			// Network problems are handled by the status indicator; never crash.
-		}
-	}
 }
 
 // --- Settings Tab ---
@@ -346,63 +257,6 @@ class HermesFrameSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
-
-		new Setting(containerEl)
-			.setName("Username")
-			.setDesc("Hermes dashboard username (stored in OS keychain)")
-			.addText((text) =>
-				text
-					.setPlaceholder("username")
-					.setValue("")
-					.onChange(async (value) => {
-						const ss = (this.app as any).secretStorage;
-						if (ss) ss.setSecret("hermes-frame-username", value);
-					})
-			);
-
-		// Password: write-once, then only overwrite
-		const ss = (this.app as any).secretStorage;
-		const hasPassword = ss?.getSecret("hermes-frame-password");
-
-		if (hasPassword) {
-			new Setting(containerEl)
-				.setName("Password")
-				.setDesc("Password is set.")
-				.addButton((btn) =>
-					btn
-						.setButtonText("Overwrite")
-						.setWarning()
-						.onClick(() => {
-							const el = btn.buttonEl.closest(".setting-item");
-							if (el) el.remove();
-							new Setting(containerEl)
-								.setName("Password")
-								.setDesc("Enter new password")
-								.addText((text) => {
-									text
-										.setPlaceholder("new password")
-										.setValue("")
-										.onChange(async (value) => {
-											if (ss) ss.setSecret("hermes-frame-password", value);
-										});
-									text.inputEl.type = "password";
-								});
-						})
-				);
-		} else {
-			new Setting(containerEl)
-				.setName("Password")
-				.setDesc("Hermes dashboard password")
-				.addText((text) => {
-					text
-						.setPlaceholder("password")
-						.setValue("")
-						.onChange(async (value) => {
-							if (ss) ss.setSecret("hermes-frame-password", value);
-						});
-					text.inputEl.type = "password";
-				});
-		}
 
 		new Setting(containerEl)
 			.setName("Poll interval (seconds)")
