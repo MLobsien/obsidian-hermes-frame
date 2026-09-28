@@ -59,6 +59,9 @@ class HermesFrameView extends ItemView {
 
 		this.iframe = container.createEl("iframe", {
 			cls: "hermes-frame-iframe",
+			attr: {
+				allow: "clipboard-read; clipboard-write",
+			},
 		});
 
 		await this.checkStatus();
